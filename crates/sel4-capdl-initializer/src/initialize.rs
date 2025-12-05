@@ -556,6 +556,7 @@ impl<'a> Initializer<'a> {
             CapRights::read_write(),
             vm_attributes_from_whether_cached_and_exec(true, false),
         )?;
+        println!("fill_frame() starting...");
         for entry in fill.iter() {
             let range = try_into_usize_range(&archived_range_to_range(&entry.range)).unwrap();
             let offset = range.start;
