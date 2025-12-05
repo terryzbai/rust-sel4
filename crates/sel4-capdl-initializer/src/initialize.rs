@@ -530,6 +530,7 @@ impl<'a> Initializer<'a> {
 
     fn init_frames(&mut self) -> Result<()> {
         debug!("Initializing Frames");
+        info!("Initializing Frames");
         for (obj_id, obj) in self.filter_objects::<object::ArchivedFrame<_>>() {
             // TODO make more platform-agnostic
             if let ArchivedFrameInit::Fill(fill) = &obj.init
