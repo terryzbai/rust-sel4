@@ -9,6 +9,7 @@ use core::ops::Range;
 use core::result::Result as CoreResult;
 use core::slice;
 use core::mem;
+use core::cmp::min;
 
 use rkyv::Archive;
 use rkyv::ops::ArchivedRange;
@@ -44,6 +45,61 @@ pub struct CapDLBootInfo {
     // TODO: add watermark tracking
 }
 
+pub fn paddr_to_kernel_vaddr(paddr: u64) -> u64 {
+    paddr.wrapping_add(virtual_base())
+}
+
+pub fn kernel_vaddr_to_paddr(vaddr: u64) -> u64 {
+    vaddr.wrapping_sub(virtual_base())
+}
+
+pub fn msb(x: u64) -> u64 {
+    64 - x.leading_zeros() as u64 - 1
+}
+
+pub fn lsb(x: u64) -> u64 {
+    x.trailing_zeros() as u64
+}
+
+fn virtual_base() -> u64 {
+    sel4::sel4_cfg_if! {
+        if #[sel4_cfg(ARCH_X86_64)] {
+            {
+                return u64::pow(2, 64) - u64::pow(2, 39);
+            }
+        } else {
+            unreachable!("uh oh");
+        }
+    }
+}
+
+// fn real_size_bits(start_paddr: u64, end_paddr: u64) -> u64 {
+//     let mut start_vaddr = paddr_to_kernel_vaddr(start_paddr);
+//     let end_vaddr = paddr_to_kernel_vaddr(end_paddr);
+//     assert!(end_paddr > start_paddr);
+
+//     // Specific to x86-64
+//     let max_bits = 47;
+
+//     let mut bits = 0;
+//     while start_vaddr != end_vaddr {
+//         let size = end_vaddr.wrapping_sub(start_vaddr);
+//         let size_bits = msb(size);
+//         if start_vaddr == 0 {
+//             bits = size_bits;
+//         } else {
+//             bits = min(size_bits, lsb(start_vaddr));
+//         }
+
+//         if bits > max_bits {
+//             bits = max_bits;
+//         }
+//         let sz = 1 << bits;
+//         start_vaddr = start_vaddr.wrapping_add(sz);
+//     }
+
+//     bits
+// }
 
 pub struct Initializer<'a> {
     bootinfo: &'a sel4::BootInfoPtr,
@@ -265,6 +321,27 @@ impl<'a> Initializer<'a> {
 
         // Create root objects
 
+        for i_ut in uts_by_paddr.iter() {
+            let ut = &uts[*i_ut];
+            let ut_size_bits = ut.size_bits();
+            let ut_size_bytes = 1 << ut_size_bits;
+            let ut_paddr_start = ut.paddr();
+            let ut_paddr_end = ut_paddr_start + ut_size_bytes;
+            let mut cur_paddr = ut_paddr_start;
+
+
+            trace!(
+                "We got untyped: {:#x}..{:#x} (size_bits = {}, device = {:?})",
+                ut_paddr_start,
+                ut_paddr_end,
+                ut_size_bits,
+                ut.is_device()
+            );
+
+                        // assert!((ut_paddr_start & (ut_size_bytes - 1)) == 0);
+
+        }
+
         let mut next_obj_with_paddr = 0;
         for (idx, i_ut) in uts_by_paddr.iter().enumerate() {
             let ut = &uts[*i_ut];
@@ -280,6 +357,7 @@ impl<'a> Initializer<'a> {
                 ut_size_bits,
                 ut.is_device()
             );
+            // assert!((ut_paddr_start & (ut_size_bytes - 1)) == 0);
             loop {
                 // target_paddr = paddr if paddr else ut_padd_end
                 let target = if next_obj_with_paddr < num_objs_with_paddr {
@@ -299,14 +377,24 @@ impl<'a> Initializer<'a> {
 
                 // ut_cur_paddr < target_paddr
                 while cur_paddr < target {
-                    // If not allocating objects with set physical address, doing a first fit alloc
-                    // algo (untypeds sorted in ascending paddr, objects for allocation sorted in
-                    // descending order by size)
-                    //
-                    // max_size_bits = min( trailing_zeros(ut_cur_paddr), trailing_zeros(target_paddr) )
-                    let max_size_bits = usize::try_from(cur_paddr.trailing_zeros())
+                    let target_vaddr = paddr_to_kernel_vaddr(target as u64) as usize;
+                    let cur_vaddr = paddr_to_kernel_vaddr(cur_paddr as u64) as usize;
+                    let max_size_bits = usize::try_from(cur_vaddr.trailing_zeros())
+                        .unwrap()
+                        .min((target_vaddr - cur_vaddr).trailing_zeros().try_into().unwrap());
+                    let old_max_size_bits = usize::try_from(cur_paddr.trailing_zeros())
                         .unwrap()
                         .min((target - cur_paddr).trailing_zeros().try_into().unwrap());
+                    if (max_size_bits != old_max_size_bits) {
+                        info!("max_size_bits {} != old_max_size_bits {}, cur_paddr: {:#x}, target: {:#x}", max_size_bits, old_max_size_bits, cur_paddr, target);
+                        info!(
+                            "Allocating from untyped: {:#x}..{:#x} (size_bits = {}, device = {:?})",
+                            ut_paddr_start,
+                            ut_paddr_end,
+                            ut_size_bits,
+                            ut.is_device()
+                        );
+                    }
                     let mut created = false;
                     if !ut.is_device() {
                         for size_bits in (0..=max_size_bits).rev() {
