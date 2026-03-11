@@ -90,6 +90,8 @@ impl<'a> Initializer<'a> {
             untypedList:bootinfo.inner().untypedList.clone(), // TODO (not a big deal) allocate in image rather than on stack
         };
         info!("capdl_bootinfo.untyped_cnode_cptr: {:?}", capdl_bootinfo.untyped_cnode_cptr);
+        debug!("CopyAddrs: {}", copy_addrs);
+        debug!("Hello");
 
         Initializer {
             bootinfo,
